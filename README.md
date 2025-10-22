@@ -10,11 +10,6 @@ A smart home safety & monitoring system leveraging solar power, designed to keep
 - [Getting Started](#getting‐started)  
   - [Prerequisites](#prerequisites)  
   - [Setup](#setup)  
-- [Usage](#usage)  
-- [Project Structure](#project‐structure)  
-- [Contributing](#contributing)  
-- [License](#license)  
-- [Contact](#contact)  
 
 ## Project Overview  
 This project is aimed at implementing a smart home safety system powered by solar energy. The goal is to monitor key home parameters (such as intrusions, fire, gas leaks, power status) and alert the homeowner while minimizing grid electricity usage by utilizing a solar-powered setup.
