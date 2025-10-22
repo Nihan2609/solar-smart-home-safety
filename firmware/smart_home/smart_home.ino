@@ -1,120 +1,137 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
+// LCD setup
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// Pins
+// Pin definitions
 const int flamePin = 8;
 const int gasPin = A0;
-const int buzzerPin = 9;
 const int irPin = 2;
-const int ledPin = 11;
-const int fanRelayPin = 10;
-const int switchLight = 5;
-const int switchFan = 6;
 const int trigPin = 3;
 const int echoPin = 4;
+const int buzzerPin = 9;
+const int fanRelayPin = 10;
+const int ledPin = 11;  // New LED (room light)
 
-// Thresholds
-int smokeThreshold = 450;      // calibrate for your MQ2
-int distanceThreshold = 50;    // cm for HC-SR04
-
-bool manualLight = false;
-bool manualFan = false;
+// Threshold values
+const int smokeThreshold = 130;     // Adjust based on MQ2
+const int distanceThreshold = 50;   // cm for intruder alert
 
 void setup() {
   Serial.begin(9600);
+
   lcd.init();
   lcd.backlight();
-  lcd.setCursor(0,0); lcd.print("Smart Home Sys");
-  lcd.setCursor(0,1); lcd.print("Initializing...");
-  delay(1500); lcd.clear();
-
+  lcd.setCursor(0, 0);
+  lcd.print(" Smart Solar Home ");
+  lcd.setCursor(0, 1);
+  lcd.print("  Initializing... ");
+  
   pinMode(flamePin, INPUT);
   pinMode(gasPin, INPUT);
-  pinMode(buzzerPin, OUTPUT);
   pinMode(irPin, INPUT);
-  pinMode(ledPin, OUTPUT);
-  pinMode(fanRelayPin, OUTPUT);
-  pinMode(switchLight, INPUT_PULLUP);
-  pinMode(switchFan, INPUT_PULLUP);
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(fanRelayPin, OUTPUT);
+  pinMode(ledPin, OUTPUT);
+
+  digitalWrite(fanRelayPin, LOW);
+  digitalWrite(ledPin, LOW);
+  noTone(buzzerPin);
+
+  delay(2000);
+  lcd.clear();
 }
 
-long readDistanceCM() {
+void loop() {
+  // --- Sensor readings ---
+  int flameStatus = digitalRead(flamePin);
+  int irStatus = digitalRead(irPin);
+  int gasValue = analogRead(gasPin);
+
+  // --- Measure Distance (ultrasonic) ---
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
 
-  long duration = pulseIn(echoPin, HIGH, 30000); // 30ms timeout
-  long distance = duration * 0.034 / 2;
-  if(distance == 0 || distance > 400) distance = 999; // invalid => far
-  return distance;
-}
+  long duration = pulseIn(echoPin, HIGH);
+  int distance = duration * 0.034 / 2;
 
-void loop() {
-  int flameStatus = digitalRead(flamePin);    // LOW = flame (module dependent)
-  int gasValue = analogRead(gasPin);          // MQ2
-  int irStatus = digitalRead(irPin);          // HIGH or LOW depending on module
-  long distance = readDistanceCM();
+  // --- Debug info ---
+  Serial.print("Flame: "); Serial.print(flameStatus == LOW ? "YES" : "NO");
+  Serial.print(" | Gas: "); Serial.print(gasValue);
+  Serial.print(" | IR: "); Serial.print(irStatus == HIGH ? "MOTION" : "NONE");
+  Serial.print(" | Distance: "); Serial.print(distance);
+  Serial.println(" cm");
 
-  // Debounce manual switches
-  static unsigned long lastSwitchTime = 0;
-  unsigned long now = millis();
-  if(digitalRead(switchLight) == LOW && now - lastSwitchTime > 200) {
-    manualLight = !manualLight; lastSwitchTime = now;
-  }
-  if(digitalRead(switchFan) == LOW && now - lastSwitchTime > 200) {
-    manualFan = !manualFan; lastSwitchTime = now;
-  }
+  // --- Determine conditions ---
+  bool alert = false;
+  bool motionDetected = (irStatus == HIGH);
+  bool fanOn = false;
+  String statusLine = "";
 
-  // Determine states: manual OR automatic (IR or proximity)
-  bool lightState = manualLight;
-  bool fanState = manualFan;
-  if(irStatus == HIGH || distance < distanceThreshold) {
-    lightState = true; fanState = true;
-  }
-
-  // Fire & smoke detection
-  bool flameDetected = (flameStatus == LOW);              // adjust if needed
-  bool smokeDetected = (gasValue > smokeThreshold);
-
-  lcd.setCursor(0,0);
-  if(flameDetected) {
+  if (flameStatus == LOW) {
+    statusLine = "Fire ALERT!";
     tone(buzzerPin, 1000);
-    lcd.print("!! FLAME ALERT !!");
-  } else if(smokeDetected) {
+    alert = true;
+  } 
+  else if (gasValue > smokeThreshold + 100) {
+    statusLine = "Gas Leak!";
     tone(buzzerPin, 900);
-    lcd.print("!! SMOKE ALERT !!");
-  } else if(distance < distanceThreshold) {
+    alert = true;
+  } 
+  else if (gasValue > smokeThreshold) {
+    statusLine = " Smoke Detected";
+    tone(buzzerPin, 800);
+    alert = true;
+  } 
+  else if (distance < distanceThreshold && distance > 0) {
+    statusLine = "Intruder Alert!";
     tone(buzzerPin, 1200);
-    lcd.print("!! INTRUDER !!   ");
-  } else {
+    alert = true;
+  } 
+  else if (motionDetected) {
+    statusLine = "All Safe ";
     noTone(buzzerPin);
-    lcd.print("Environment OK  ");
+  } 
+  else {
+    statusLine = "All Safe        ";
+    noTone(buzzerPin);
   }
 
-  // Apply outputs
-  digitalWrite(ledPin, lightState ? HIGH : LOW);
-  digitalWrite(fanRelayPin, fanState ? HIGH : LOW);
+  // --- Fan and LED Control ---
+  if (motionDetected || alert) {
+    digitalWrite(fanRelayPin, HIGH);  // Fan ON
+    digitalWrite(ledPin, HIGH);       // Light ON
+    fanOn = true;
+  } else {
+    digitalWrite(fanRelayPin, LOW);   // Fan OFF
+    digitalWrite(ledPin, LOW);        // Light OFF
+    fanOn = false;
+  }
 
-  // LCD row 2 status
-  lcd.setCursor(0,1);
-  if(lightState && fanState) lcd.print("LIGHT+FAN ON   ");
-  else if(lightState) lcd.print("LIGHT ON       ");
-  else if(fanState) lcd.print("FAN ON         ");
-  else lcd.print("ALL OFF        ");
+  // --- LCD display ---
+  lcd.setCursor(0, 0);
+  lcd.print("F:");
+  lcd.print(flameStatus == LOW ? "Y" : "N");
+  lcd.print(" G:");
+  lcd.print(gasValue);
+  lcd.print(" D:");
+  lcd.print(distance);
+  lcd.print("  ");
 
-  // Serial debug
-  Serial.print("Flame:"); Serial.print(flameStatus);
-  Serial.print(" Gas:"); Serial.print(gasValue);
-  Serial.print(" IR:"); Serial.print(irStatus);
-  Serial.print(" Dist:"); Serial.print(distance);
-  Serial.print(" Light:"); Serial.print(lightState);
-  Serial.print(" Fan:"); Serial.println(fanState);
+  lcd.setCursor(0, 1);
+  lcd.print(statusLine);
+  int remaining = 16 - statusLine.length();
+  for (int i = 0; i < remaining; i++) lcd.print(" ");
 
-  delay(300);
+  // Fan indicator
+  lcd.setCursor(14, 0);
+
+
+  delay(700);
 }
